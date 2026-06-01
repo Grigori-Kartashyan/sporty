@@ -2,7 +2,9 @@ environments:
   staging:
     file: staging.yaml
     env_prefix: APP_STAGING_
+    remote: http://localhost:8080/staging
 
   production:
     file: production.yaml
     env_prefix: APP_PROD_
+    remote: http://localhost:8080/production

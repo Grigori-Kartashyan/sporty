@@ -1,5 +1,7 @@
+import json
 import logging
 import os
+import urllib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,3 +99,49 @@ def _set_nested(target: dict[str, Any], parts: list[str], value: Any) -> None:
             cur[p] = nxt
         cur = nxt
     cur[parts[-1]] = value
+
+
+class HttpRemoteSource(Source):
+    def __init__(
+        self,
+        url: str,
+        name: str,
+        timeout: float = 5.0,
+    ):
+        self.url = url
+        self.name = name
+        self.timeout = timeout
+
+    def load(self) -> LoadedConfig:
+        request = urllib.request.Request(self.url, headers={"Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                body = response.read()
+                content_type = response.headers.get("Content-Type", "")
+        except urllib.error.URLError as e:
+            raise SourceUnavailable(f"{self.name}: failed to fetch {self.url}: {e.reason}") from e
+        except TimeoutError as e:
+            raise SourceUnavailable(f"{self.name}: timeout fetching {self.url}") from e
+
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise SourceUnavailable(f"{self.name}: response not UTF-8: {e}") from e
+
+        try:
+            if "json" in content_type.lower():
+                data: Any = json.loads(text)
+            else:
+                data = yaml.safe_load(text)
+        except (yaml.YAMLError, json.JSONDecodeError) as e:
+            raise SourceUnavailable(f"{self.name}: failed to parse response: {e}") from e
+
+        if data is None:
+            data = {}
+        if not isinstance(data, dict):
+            raise SourceUnavailable(
+                f"{self.name}: response top-level must be a mapping, got {type(data).__name__}"
+            )
+
+        logger.info("Loaded HTTP source",)
+        return LoadedConfig(name=self.name, data=data)

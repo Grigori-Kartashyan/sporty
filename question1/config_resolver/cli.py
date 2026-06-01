@@ -14,7 +14,7 @@ from .sources import (
     LoadedConfig,
     Source,
     SourceUnavailable,
-    YamlFileSource,
+    YamlFileSource, HttpRemoteSource,
 )
 
 EXIT_OK = 0
@@ -52,6 +52,7 @@ class EnvSpec:
     name: str
     file: Path | None
     env_prefix: str | None
+    remote: str | None
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,7 @@ def load_inputs(path: Path) -> InputsConfig:
             name=str(name),
             file=(base_dir / file_str) if file_str else None,
             env_prefix=spec.get("env_prefix"),
+            remote=spec.get("remote"),
         )
     return InputsConfig(environments=environments, base_dir=base_dir)
 
@@ -95,6 +97,8 @@ def load_env_sources(
 
     if env.file is not None:
         sources.append(YamlFileSource(env.file, name=f"{env.name}:file"))
+    if env.remote is not None:
+        sources.append(HttpRemoteSource(env.remote, name=f"{env.name}:remote"))
     if include_env_vars and env.env_prefix is not None:
         sources.append(
             EnvVarSource(
@@ -106,7 +110,11 @@ def load_env_sources(
 
     loaded: list[LoadedConfig] = []
     for src in sources:
-        loaded.append(src.load())
+        try:
+            loaded.append(src.load())
+        except SourceUnavailable:
+            logger.error("Source unavailable")
+            raise
     return loaded
 
 def cmd_resolve(args: argparse.Namespace, inputs: InputsConfig) -> int:
