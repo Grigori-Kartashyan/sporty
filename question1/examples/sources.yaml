@@ -1,0 +1,8 @@
+environments:
+  staging:
+    file: staging.yaml
+    env_prefix: APP_STAGING_
+
+  production:
+    file: production.yaml
+    env_prefix: APP_PROD_

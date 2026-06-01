@@ -1,0 +1,6 @@
+database:
+  host: db.prod
+  port: 5432
+  password: prod_secret_from_file
+  pool_size: 50
+  pool_timeout_ms: 1000

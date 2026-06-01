@@ -1,0 +1,6 @@
+database:
+  host: db.stage
+  port: 5432
+  password: staging_secret_from_file
+  pool_size: 5
+  pool_timeout_ms: 250
