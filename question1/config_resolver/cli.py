@@ -92,8 +92,9 @@ def load_env_sources(
             loaded.append(src.load())
         except SourceUnavailable:
             if not allow_partial:
-                logger.error("Source unavailable")
+                logger.exception(f"Source {src.name} unavailable")
                 raise
+            logger.warning(f"Source {src.name} unavailable, omitting from merge")
     return loaded
 
 
