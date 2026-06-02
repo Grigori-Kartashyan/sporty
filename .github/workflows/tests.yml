@@ -13,4 +13,6 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run tests in container
-        run: cd question1 && make test
+        run: |
+	  cd question1 && make test
+	  cd ../question2 && make test

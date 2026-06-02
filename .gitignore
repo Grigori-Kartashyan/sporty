@@ -2,5 +2,6 @@ question1/.idea/*
 question1/config_resolver/__pycache__/*
 question1/__pycache__/*
 question1/tests/__pycache__/*
+question2/tests/__pycache__/*
 question2/.idea/*
 question2/__pycache__/*
