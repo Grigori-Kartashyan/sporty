@@ -1,7 +1,8 @@
 import json
 import logging
 import os
-import urllib
+import urllib.error
+import urllib.request
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
