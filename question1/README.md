@@ -16,10 +16,10 @@ For a given environment, up to three sources are loaded and merged:
 | `remote` | an HTTP endpoint returning JSON or YAML              | middle           |
 | `env`    | environment variables with a given prefix            | highest          |
 
-The default precedence (`file` → `remote` → `env`, lowest to highest) follows
+The default precedence (`file` -> `remote` -> `env`, lowest to highest) follows
 12-factor conventions: static file defaults form the baseline, remote runtime
 config overrides them, and per-deployment environment variables win over all.
-Merging is **deep** — nested maps are merged key-by-key, so a single env var
+Merging is deep, nested maps are merged key-by-key, so a single env var
 override does not clobber sibling keys from the file.
 
 ### Environment variable mapping
@@ -32,18 +32,16 @@ APP_STAGING_DATABASE__HOST=db.local   ->   database.host = db.local
 APP_STAGING_DATABASE__POOL_SIZE=20    ->   database.pool_size = 20
 ```
 
-Values are parsed as YAML scalars, so `20` becomes an int and `true` a bool.
-
 ### Secret masking
 
 When config is printed to the terminal, keys that look like secrets
 (`password`, `secret`, `token`, `api_key`, `credential`, `private_key`,
-`access_key`, …) are masked as `********`. Masking is **display-only**: when you
+`access_key`) are masked as `********`. Masking is display-only: when you
 write resolved config to a file with `--output`, the real values are written.
 
 ## Install
 
-Requires Python ≥ 3.11. Dependencies are managed with [Poetry](https://python-poetry.org/).
+Requires Python ≥ 3.11.
 
 ```bash
 # install Poetry if you don't have it
@@ -56,8 +54,8 @@ poetry install
 poetry install --with dev
 ```
 
-Run commands inside the environment with `poetry run …`, or open a shell with
-`poetry env activate` (Poetry 2.x).
+Run commands inside the environment with `poetry run `, or open a shell with
+`poetry env activate`.
 
 ## Configure your sources
 
@@ -176,3 +174,4 @@ skipped instead of failing.
 ```bash
 poetry run pytest
 ```
+## Quick start
