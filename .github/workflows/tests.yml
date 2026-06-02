@@ -8,11 +8,14 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        question: [question1, question2]
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Run tests in container
-        run: |
-	  cd question1 && make test
-	  cd ../question2 && make test
+        run: make test
+        working-directory: ${{ matrix.question }}
