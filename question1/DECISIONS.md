@@ -1,6 +1,6 @@
 ## Which configuration sources did you support and why? What did you exclude?
 
-Three sources per environment, in precedence order (low to high): a YAML file, an HTTP remote (mocked locally) and environment variables (APP_<env>_* with __ for nesting).
+Three sources per environment, in precedence order (low to high): a YAML file, an HTTP remote (mocked locally) and environment variables (`APP_<env>_*` with `__` for nesting).
 I've choos three sources to cover the distinct categories, a file, a remote API, and process env, rather than three flavors of the same thing. Each exercises a different loading and normalization path 
 Excluded: secret managers (Vault, AWS/GCP Secrets Manager) they add auth, SDK and some other complexity without changing the merge/diff logic, which is the core of the task. Also excluded other file formats (ini, toml, .env), they'd be almost duplicate loaders of the YAML path.
 
