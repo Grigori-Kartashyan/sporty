@@ -6,12 +6,13 @@ from pathlib import Path
 
 import yaml
 
-from config_resolver.merge import merge_sources
+from config_resolver.merge import DEFAULT_PRECEDENCE, merge_sources
 from utils import render_resolved, make_masker, render_shadowed_only
 from .sources import (
     EnvVarSource,
     LoadedConfig,
     Source,
+    SourceKind,
     SourceUnavailable,
     YamlFileSource, HttpRemoteSource,
 )
@@ -108,7 +109,7 @@ def cmd_apply(args: argparse.Namespace, inputs: InputsConfig) -> int:
         return EXIT_USAGE
 
     sources = load_env_sources(inputs.environments[env_name], allow_partial=args.allow_partial)
-    merged = merge_sources(sources)
+    merged = merge_sources(sources, precedence=args.precedence)
     masker = make_masker()
 
     if args.dry_run:
@@ -122,6 +123,24 @@ def cmd_apply(args: argparse.Namespace, inputs: InputsConfig) -> int:
 
     return EXIT_OK
 
+
+
+def _parse_precedence(raw: str) -> tuple[SourceKind, ...]:
+    kinds: list[SourceKind] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            kinds.append(SourceKind(part))
+        except ValueError:
+            valid = ", ".join(k.value for k in SourceKind)
+            raise argparse.ArgumentTypeError(
+                f"unknown source kind {part!r}; valid kinds: {valid}"
+            )
+    if not kinds:
+        raise argparse.ArgumentTypeError("precedence must list at least one source kind")
+    return tuple(kinds)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -156,6 +175,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("json", "yaml"),
         default="yaml",
         help="Output format.",
+    )
+    apply_p.add_argument(
+        "--precedence",
+        type=_parse_precedence,
+        default=DEFAULT_PRECEDENCE,
+        metavar="KIND,KIND,...",
+        help=(
+            "Source precedence, lowest to highest priority "
+            f"(default: {','.join(k.value for k in DEFAULT_PRECEDENCE)})."
+        ),
     )
 
     return parser

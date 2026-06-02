@@ -5,6 +5,7 @@ import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -17,14 +18,22 @@ class SourceUnavailable(Exception):
     ...
 
 
+class SourceKind(str, Enum):
+    FILE = "file"
+    REMOTE = "remote"
+    ENV = "env"
+
+
 @dataclass(frozen=True)
 class LoadedConfig:
     name: str
     data: dict[str, Any]
+    kind: SourceKind
 
 
 class Source(ABC):
     name: str
+    kind: SourceKind
 
     @abstractmethod
     def load(self) -> LoadedConfig:
@@ -32,6 +41,8 @@ class Source(ABC):
 
 
 class YamlFileSource(Source):
+    kind = SourceKind.FILE
+
     def __init__(self, path: Path, name: str = "file"):
         self.path = path
         self.name = name
@@ -52,10 +63,12 @@ class YamlFileSource(Source):
                 f"{self.name}: {self.path} top-level must be a mapping, got {type(raw).__name__}"
             )
         logger.info("Loaded YAML source")
-        return LoadedConfig(name=self.name, data=raw)
+        return LoadedConfig(name=self.name, data=raw, kind=self.kind)
 
 
 class EnvVarSource(Source):
+    kind = SourceKind.ENV
+
     def __init__(
         self,
         prefix: str,
@@ -80,7 +93,7 @@ class EnvVarSource(Source):
             _set_nested(out, parts, parsed)
             count += 1
         logger.info("Loaded env-var source")
-        return LoadedConfig(name=self.name, data=out)
+        return LoadedConfig(name=self.name, data=out, kind=self.kind)
 
     @staticmethod
     def _parsed_value(raw: str) -> Any:
@@ -103,6 +116,8 @@ def _set_nested(target: dict[str, Any], parts: list[str], value: Any) -> None:
 
 
 class HttpRemoteSource(Source):
+    kind = SourceKind.REMOTE
+
     def __init__(
         self,
         url: str,
@@ -145,4 +160,4 @@ class HttpRemoteSource(Source):
             )
 
         logger.info("Loaded HTTP source",)
-        return LoadedConfig(name=self.name, data=data)
+        return LoadedConfig(name=self.name, data=data, kind=self.kind)

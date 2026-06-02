@@ -1,7 +1,14 @@
 from dataclasses import dataclass
 from typing import Any
 
-from .sources import LoadedConfig
+from .sources import LoadedConfig, SourceKind
+
+
+DEFAULT_PRECEDENCE: tuple[SourceKind, ...] = (
+    SourceKind.FILE,
+    SourceKind.REMOTE,
+    SourceKind.ENV,
+)
 
 
 @dataclass(frozen=True)
@@ -19,18 +26,36 @@ class MergeResult:
     shadowed: list[ShadowedValue]
 
 
-def merge_sources(sources_low_to_high: list[LoadedConfig]) -> MergeResult:
-    if not sources_low_to_high:
+def merge_sources(
+    sources: list[LoadedConfig],
+    precedence: tuple[SourceKind, ...] = DEFAULT_PRECEDENCE,
+) -> MergeResult:
+    if not sources:
         return MergeResult(merged={}, shadowed=[])
+
+    ordered = _order_by_precedence(sources, precedence)
 
     merged: dict[str, Any] = {}
     provenance: dict[tuple[str, ...], str] = {}
     shadowed: list[ShadowedValue] = []
 
-    for src in sources_low_to_high:
+    for src in ordered:
         _merge_in(merged, src.data, src.name, (), provenance, shadowed)
 
     return MergeResult(merged=merged, shadowed=shadowed)
+
+
+def _order_by_precedence(
+    sources: list[LoadedConfig],
+    precedence: tuple[SourceKind, ...],
+) -> list[LoadedConfig]:
+    def rank(src: LoadedConfig) -> int:
+        try:
+            return precedence.index(src.kind)
+        except ValueError:
+            return len(precedence)
+
+    return sorted(sources, key=rank)
 
 
 def _merge_in(
