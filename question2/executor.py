@@ -15,7 +15,10 @@ You MUST follow the existing patterns unless you justify diverging.
 import abc
 import logging
 import json
+import random
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
 from typing import Any
 from dataclasses import dataclass, field
@@ -59,7 +62,36 @@ class TaskStatus(Enum):
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
-    TIMEOUT = "timeout"  # You will need to implement this
+    TIMEOUT = "timeout"
+
+
+class BackoffStrategy(Enum):
+    FIXED = "fixed"
+    EXPONENTIAL = "exponential"
+    EXPONENTIAL_JITTER = "exponential_jitter"
+
+
+class TaskTimeoutError(Exception):
+    ...
+
+
+@dataclass
+class RetryPolicy:
+    max_attempts: int = 1
+    backoff: BackoffStrategy = BackoffStrategy.EXPONENTIAL_JITTER
+    base_delay: float = 0.5
+    max_delay: float = 30.0
+
+    def delay_for(self, attempt: int) -> float:
+        if self.backoff is BackoffStrategy.FIXED:
+            delay = self.base_delay
+        else:
+            window = self.base_delay * (2 ** (attempt - 1))
+            if self.backoff is BackoffStrategy.EXPONENTIAL_JITTER:
+                delay = random.uniform(0, window)
+            else:
+                delay = window
+        return min(delay, self.max_delay)
 
 
 @dataclass
@@ -85,8 +117,8 @@ class TaskConfig:
     task_type: str
     target: str
     params: dict[str, Any] = field(default_factory=dict)
-    # TODO: Add retry configuration
-    # TODO: Add timeout configuration
+    retry: RetryPolicy = field(default_factory=RetryPolicy)
+    timeout_seconds: float | None = None
 
 
 # ============================================================================
@@ -189,6 +221,30 @@ class HttpCheckTask(BaseTask):
         }
 
 
+@register_task("tcp_check")
+class TcpCheckTask(BaseTask):
+    def validate(self) -> bool:
+        host, sep, port = self.config.target.rpartition(":")
+        return bool(host) and sep == ":" and port.isdigit()
+
+    def execute(self) -> dict[str, Any]:
+        import socket
+
+        host, _, port_str = self.config.target.rpartition(":")
+        port = int(port_str)
+        connect_timeout = self.config.params.get("connect_timeout", 5)
+
+        self.logger.info(f"Connecting to {host}:{port}")
+
+        try:
+            with socket.create_connection((host, port), timeout=connect_timeout):
+                pass
+        except OSError as e:
+            raise RuntimeError(f"TCP connect failed: {e}")
+
+        return {"host": host, "port": port, "reachable": True}
+
+
 # ============================================================================
 # Task Executor (EXTEND THIS)
 # ============================================================================
@@ -211,13 +267,25 @@ class TaskExecutor:
     def __init__(self, logger: logging.Logger | None = None):
         self.logger = logger or setup_logging()
         self.results: list[TaskResult] = []
-    
+
+    def _execute_with_timeout(
+        self, task: BaseTask, timeout_seconds: float | None
+    ) -> dict[str, Any]:
+        if timeout_seconds is None:
+            return task.execute()
+
+        pool = ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(task.execute)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FutureTimeoutError:
+            raise TaskTimeoutError(f"timed out after {timeout_seconds}s")
+        finally:
+            pool.shutdown(wait=False)
+
     def run_task(self, config: TaskConfig) -> TaskResult:
         """
         Execute a single task and return its result.
-        
-        TODO: Add retry logic here or in a separate method.
-        TODO: Add timeout handling.
         """
         started_at = datetime.now(timezone.utc)
         
@@ -227,18 +295,7 @@ class TaskExecutor:
             
             if not task.validate():
                 raise ValueError(f"Task validation failed: {config.task_id}")
-            
-            self.logger.info(f"Starting task: {config.task_id}")
-            result_data = task.execute()
-            
-            return TaskResult(
-                task_id=config.task_id,
-                status=TaskStatus.SUCCESS,
-                started_at=started_at,
-                completed_at=datetime.now(timezone.utc),
-                result_data=result_data
-            )
-            
+
         except Exception as e:
             self.logger.error(f"Task failed: {config.task_id} - {e}")
             return TaskResult(
@@ -246,9 +303,73 @@ class TaskExecutor:
                 status=TaskStatus.FAILED,
                 started_at=started_at,
                 completed_at=datetime.now(timezone.utc),
-                error_message=str(e)
+                error_message=str(e),
+                attempts=0,
             )
-    
+
+        policy = config.retry
+        last_status = TaskStatus.FAILED
+        last_error: str | None = None
+        attempt = 0
+
+        while attempt < policy.max_attempts:
+            attempt += 1
+            try:
+                self.logger.info(
+                    f"Starting task: {config.task_id} "
+                    f"(attempt {attempt}/{policy.max_attempts})"
+                )
+                result_data = self._execute_with_timeout(
+                    task, config.timeout_seconds
+                )
+                if attempt > 1:
+                    self.logger.info(
+                        f"Task succeeded after {attempt} attempts: {config.task_id}"
+                    )
+                return TaskResult(
+                    task_id=config.task_id,
+                    status=TaskStatus.SUCCESS,
+                    started_at=started_at,
+                    completed_at=datetime.now(timezone.utc),
+                    result_data=result_data,
+                    attempts=attempt,
+                )
+            except TaskTimeoutError as e:
+                last_status = TaskStatus.TIMEOUT
+                last_error = str(e)
+                self.logger.warning(
+                    f"Task timed out: {config.task_id} "
+                    f"(attempt {attempt}/{policy.max_attempts}) - {e}"
+                )
+            except Exception as e:
+                last_status = TaskStatus.FAILED
+                last_error = str(e)
+                self.logger.error(
+                    f"Task attempt failed: {config.task_id} "
+                    f"(attempt {attempt}/{policy.max_attempts}) - {e}"
+                )
+
+            if attempt < policy.max_attempts:
+                delay = policy.delay_for(attempt)
+                self.logger.info(
+                    f"Retrying task: {config.task_id} in {delay:.2f}s "
+                    f"(next attempt {attempt + 1}/{policy.max_attempts})"
+                )
+                time.sleep(delay)
+
+        self.logger.error(
+            f"Task exhausted retries: {config.task_id} "
+            f"after {attempt} attempt(s) - final status {last_status.value}"
+        )
+        return TaskResult(
+            task_id=config.task_id,
+            status=last_status,
+            started_at=started_at,
+            completed_at=datetime.now(timezone.utc),
+            error_message=last_error,
+            attempts=attempt,
+        )
+
     def run_all(self, configs: list[TaskConfig]) -> list[TaskResult]:
         """
         Execute multiple tasks and return all results.
@@ -261,19 +382,27 @@ class TaskExecutor:
             result = self.run_task(config)
             self.results.append(result)
         return self.results
-    
+
     def summary(self) -> dict[str, Any]:
         """Return aggregate statistics about executed tasks."""
         total = len(self.results)
-        by_status = {}
+        by_status: dict[str, int] = {}
+        total_attempts = 0
+        retried_tasks = 0
         for result in self.results:
             status = result.status.value
             by_status[status] = by_status.get(status, 0) + 1
-        
+            total_attempts += result.attempts
+            if result.attempts > 1:
+                retried_tasks += 1
+
         return {
             "total": total,
             "by_status": by_status,
-            "success_rate": by_status.get("success", 0) / total if total else 0
+            "success_rate": by_status.get("success", 0) / total if total else 0,
+            "total_attempts": total_attempts,
+            "retried_tasks": retried_tasks,
+            "retries": total_attempts - total,
         }
 
 
@@ -284,7 +413,7 @@ class TaskExecutor:
 if __name__ == "__main__":
     # Example usage - you may modify this for testing
     executor = TaskExecutor()
-    
+
     test_configs = [
         TaskConfig(
             task_id="check-google",
@@ -294,11 +423,28 @@ if __name__ == "__main__":
         ),
         TaskConfig(
             task_id="check-fake",
-            task_type="http_check", 
+            task_type="http_check",
             target="https://this-does-not-exist.invalid",
-            params={"expected_status": 200}
+            params={"expected_status": 200},
+            retry=RetryPolicy(max_attempts=3, base_delay=0.2),
+        ),
+        TaskConfig(
+            task_id="check-dns-port",
+            task_type="tcp_check",
+            target="8.8.8.8:53",
+            timeout_seconds=5,
+        ),
+        # Hanging task: each attempt exceeds the 0.5s budget and is recorded
+        # as TIMEOUT, distinct from a plain failure.
+        TaskConfig(
+            task_id="hang",
+            task_type="sleep",
+            target="-",
+            params={"seconds": 5},
+            timeout_seconds=0.5,
+            retry=RetryPolicy(max_attempts=2, base_delay=0.2),
         ),
     ]
-    
+
     results = executor.run_all(test_configs)
     print(json.dumps(executor.summary(), indent=2))
