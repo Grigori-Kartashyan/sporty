@@ -2,7 +2,8 @@ import json
 from typing import Any
 
 from config_resolver.masking import Masker
-from config_resolver.merge import ShadowedValue
+from config_resolver.merge import ShadowedValue, DEFAULT_PRECEDENCE
+from config_resolver.sources import SourceKind
 
 
 def render_resolved(config: dict[str, Any], masker: Masker, fmt: str, *, mask: bool = True) -> str:
@@ -31,13 +32,13 @@ def make_masker() -> Masker:
     return Masker()
 
 
-def render_shadowed_only(shadowed: list[ShadowedValue]) -> str:
+def render_shadowed_only(shadowed: list[ShadowedValue], precedence: tuple[SourceKind, ...] = DEFAULT_PRECEDENCE) -> str:
     if not shadowed:
         return "no env overrides"
-    out: list[str] = ["Env precedence overrides (lower → higher):"]
+    out: list[str] = [f"Env precedence overrides (lower -> higher) ({'->'.join([p.value for p in precedence])}):"]
     for s in shadowed:
         out.append(
-            f"  {_path_str(s.path):30}  {s.loser_source} → {s.winner_source} "
+            f"  {_path_str(s.path):30}  {s.loser_source} -> {s.winner_source} "
             f"(now: {_fmt_value(s.winner_value)})"
         )
     return "\n".join(out)

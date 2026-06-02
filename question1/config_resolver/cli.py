@@ -114,7 +114,7 @@ def cmd_apply(args: argparse.Namespace, inputs: InputsConfig) -> int:
 
     if args.dry_run:
         print(render_resolved(merged.merged, masker, fmt=args.format))
-        print(render_shadowed_only(merged.shadowed), file=sys.stderr)
+        print(render_shadowed_only(merged.shadowed, args.precedence), file=sys.stderr)
         return EXIT_OK
 
     rendered = render_resolved(merged.merged, masker, fmt=args.format, mask=False)
