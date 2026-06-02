@@ -96,6 +96,28 @@ def load_env_sources(
     return loaded
 
 
+def cmd_apply(args: argparse.Namespace, inputs: InputsConfig) -> int:
+    env_name: str = args.env
+    if env_name not in inputs.environments:
+        logger.error("Unknown environment")
+        return EXIT_USAGE
+
+    output_path = Path(args.output) if args.output else None
+    if output_path is None:
+        logger.error("apply requires --output file")
+        return EXIT_USAGE
+
+    sources = load_env_sources(inputs.environments[env_name], allow_partial=args.allow_partial)
+    merged = merge_sources(sources)
+    masker = make_masker()
+
+    rendered = render_resolved(merged.merged, masker, fmt="yaml", mask=False)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(rendered + "\n", encoding="utf-8")
+
+    return EXIT_OK
+
 def cmd_resolve(args: argparse.Namespace, inputs: InputsConfig) -> int:
     env_name: str = args.env
     if env_name not in inputs.environments:
@@ -114,6 +136,21 @@ def cmd_resolve(args: argparse.Namespace, inputs: InputsConfig) -> int:
     return EXIT_OK
 
 
+
+def _shared_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Proceed when a source is unavailable.",
+    )
+    p.add_argument(
+        "--format",
+        choices=("json", "yaml"),
+        default="yaml",
+        help="Output format.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="config-resolver",
@@ -128,22 +165,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    resolve = sub.add_parser("resolve", help="Merge sources for one env and print the merged config.")
-    resolve.add_argument("env", help="Environment name (must exist in sources.yaml).")
-    resolve.add_argument(
-        "--allow-partial",
-        action="store_true",
-        help="Proceed when a source is unavailable.",
-    )
-    resolve.add_argument(
-        "--format",
-        choices=("json", "yaml"),
-        default="yaml",
-        help="Output format.",
-    )
+    resolve_p = sub.add_parser("resolve", help="Merge sources for one env and print the merged config.")
+    resolve_p.add_argument("env", help="Environment name (must exist in sources.yaml).")
+    _shared_args(resolve_p)
+
+    apply_p = sub.add_parser("apply", help="Resolve an env and write the merged config to file.")
+    apply_p.add_argument("env")
+    apply_p.add_argument("--output", required=True, help="Output path for the merged config.")
+    _shared_args(apply_p)
 
     return parser
 
+_DISPATCH = {
+    "resolve": cmd_resolve,
+    "apply": cmd_apply,
+}
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
@@ -154,9 +190,12 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, ValueError):
         logger.exception("Failed to load --inputs")
         return EXIT_USAGE
+    handler = _DISPATCH.get(args.cmd)
+    if handler is None:
+        parser.error(f"unknown subcommand: {args.cmd}")
 
     try:
-        return cmd_resolve(args, inputs)
+        return handler(args, inputs)
     except SourceUnavailable:
         logger.exception("Source unavailable")
         return EXIT_USAGE
