@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from config_resolver.masking import Masker
 from config_resolver.merge import merge_sources, ShadowedValue
 from .sources import (
     EnvVarSource,
@@ -33,6 +34,10 @@ def _fmt_value(value: Any) -> str:
     if isinstance(value, dict | list):
         return json.dumps(value, default=str)
     return str(value)
+
+
+def _make_masker() -> Masker:
+    return Masker()
 
 
 def render_shadowed_only(shadowed: list[ShadowedValue]) -> str:
@@ -119,6 +124,16 @@ def load_env_sources(
                 raise
     return loaded
 
+
+def render_resolved(config: dict[str, Any], masker: Masker, fmt: str, *, mask: bool = True) -> str:
+    data = masker.mask_config(config) if mask else config
+    if fmt == "json":
+        return json.dumps(data, indent=2, default=str)
+    import yaml as _yaml
+
+    return _yaml.safe_dump(data, sort_keys=True, default_flow_style=False).rstrip()
+
+
 def cmd_resolve(args: argparse.Namespace, inputs: InputsConfig) -> int:
     env_name: str = args.env
     if env_name not in inputs.environments:
@@ -131,7 +146,8 @@ def cmd_resolve(args: argparse.Namespace, inputs: InputsConfig) -> int:
         allow_partial
     )
     merged = merge_sources(sources)
-    print(yaml.safe_dump(merged.merged, sort_keys=True, default_flow_style=False).rstrip())
+    masker = _make_masker()
+    print(render_resolved(merged.merged, masker, fmt=args.format))
     print(render_shadowed_only(merged.shadowed), file=sys.stderr)
     return EXIT_OK
 
@@ -156,6 +172,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-partial",
         action="store_true",
         help="Proceed when a source is unavailable.",
+    )
+    resolve.add_argument(
+        "--format",
+        choices=("json", "yaml"),
+        default="yaml",
+        help="Output format.",
     )
 
     return parser
