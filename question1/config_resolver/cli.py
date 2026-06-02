@@ -90,6 +90,7 @@ def load_inputs(path: Path) -> InputsConfig:
 
 def load_env_sources(
     env: EnvSpec,
+    allow_partial: bool,
     include_env_vars: bool = True,
     env_override: dict[str, str] | None = None,
 ) -> list[LoadedConfig]:
@@ -113,8 +114,9 @@ def load_env_sources(
         try:
             loaded.append(src.load())
         except SourceUnavailable:
-            logger.error("Source unavailable")
-            raise
+            if not allow_partial:
+                logger.error("Source unavailable")
+                raise
     return loaded
 
 def cmd_resolve(args: argparse.Namespace, inputs: InputsConfig) -> int:
@@ -123,8 +125,10 @@ def cmd_resolve(args: argparse.Namespace, inputs: InputsConfig) -> int:
         logger.exception("Unknown environment")
         return EXIT_USAGE
 
+    allow_partial: bool = args.allow_partial
     sources = load_env_sources(
         inputs.environments[env_name],
+        allow_partial
     )
     merged = merge_sources(sources)
     print(yaml.safe_dump(merged.merged, sort_keys=True, default_flow_style=False).rstrip())
@@ -148,6 +152,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     resolve = sub.add_parser("resolve", help="Merge sources for one env and print the merged config.")
     resolve.add_argument("env", help="Environment name (must exist in sources.yaml).")
+    resolve.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Proceed when a source is unavailable.",
+    )
 
     return parser
 
